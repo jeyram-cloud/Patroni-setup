@@ -1,0 +1,24 @@
+# Vagrant
+.vagrant/
+*.log
+
+# VirtualBox
+*.vbox
+*.vmdk
+*.vdi
+
+# VirtualBox saved state / logs in the repo (from VBoxHeadless)
+*-VBoxHeadless-*.log
+
+# macOS
+.DS_Store
+
+# Local cluster overrides (uncomment if you want per-user overrides)
+# vagrant-configs/cluster.local.conf
+
+# Scratch / staging (not part of the repo)
+.scratch_vbox_logs/
+*.swp
+*.swo
+.idea/
+.vscode/

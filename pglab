@@ -1,0 +1,289 @@
+#!/usr/bin/env bash
+# ----------------------------------------------------------
+# pglab — single entry-point for the 6-node Patroni HA cluster
+#
+# Subcommands (run `pglab help` for full list):
+#   up        boot all 8 VMs (vagrant up)
+#   down      halt VMs but keep state (vagrant halt)
+#   status    show VM state + Patroni + etcd + HAProxy + VIP
+#   deploy    full provisioning (post-teardown; replaces VMs cleanly)
+#   teardown  destroy VMs + clean host-only networks (optionally remove box)
+#   reset     teardown + re-deploy from scratch (one-shot recovery)
+#   test      HA failover test (stop current leader, verify replica takes over)
+#   console   open a psql session via the VIP
+#   ssh       ssh into a node: `pglab ssh postnode1`
+#   logs      tail logs for a node: `pglab logs postnode1 patroni`
+#   help      this help
+#
+# The order to run a fresh build is:
+#     1. pglab teardown   (clean slate)
+#     2. pglab deploy     (vagrant up + provision everything)
+#     3. pglab status     (verify the cluster)
+# Or, in one shot:
+#     pglab reset
+# ----------------------------------------------------------
+set -euo pipefail
+
+PROJ_ROOT="$(cd "$(dirname "$0")" && pwd)"
+DEPLOY="$PROJ_ROOT/vagrant-configs/cluster-deploy.sh"
+TEARDOWN="$PROJ_ROOT/teardown.sh"
+VAGRANT_DIR="$PROJ_ROOT"
+CONF="$PROJ_ROOT/vagrant-configs/cluster.conf"
+
+cd "$PROJ_ROOT"
+
+# Source cluster.conf — single source of truth for IPs, hostnames, ports,
+# credentials. Required by status/test/console commands.
+# shellcheck disable=SC1090
+. "$CONF"
+
+# DB_NODES, LB_VMS, NODE_IP_<n>, VIP_WRITE, VIP_READ, *_PORT, ETCD_ENDPOINTS,
+# PG_*_PASSWORD, etc. now come from cluster.conf.
+ALL_VMS=("${DB_NODES[@]}" "${LB_VMS[@]}")
+# First DB node is the canonical probe for etcd/Patroni admin commands.
+PROBE_NODE="${DB_NODES[0]}"
+PROBE_IP_VAR="NODE_IP_${PROBE_NODE}"
+PROBE_IP="${!PROBE_IP_VAR}"
+
+# Build the etcd endpoint list (http://ip:2379,...) from cluster.conf.
+ETCDCTL_ENDPOINTS=""
+for n in "${ETCD_NODES[@]}"; do
+  ip_var="NODE_IP_${n}"
+  ETCDCTL_ENDPOINTS="${ETCDCTL_ENDPOINTS}http://${!ip_var}:2379,"
+done
+ETCDCTL_ENDPOINTS="${ETCDCTL_ENDPOINTS%,}"
+
+# ----------------------------------------------------------------
+# Helpers
+# ----------------------------------------------------------------
+log() { printf '\033[1;36m[pglab]\033[0m %s\n' "$*"; }
+die() { printf '\033[1;31m[pglab ERROR]\033[0m %s\n' "$*" >&2; exit 1; }
+
+require_file() {
+  local f="$1"
+  [ -f "$f" ] || die "missing required file: $f"
+}
+
+ensure_vagrant_running() {
+  for n in "${ALL_VMS[@]}"; do
+    if ! vagrant ssh "$n" -c 'true' >/dev/null 2>&1; then
+      die "VM '$n' is not reachable. Run 'pglab up' or 'pglab deploy' first."
+    fi
+  done
+}
+
+# ----------------------------------------------------------------
+# Subcommands
+# ----------------------------------------------------------------
+cmd_up() {
+  log "Bringing up all VMs (vagrant up)..."
+  cd "$VAGRANT_DIR"
+  vagrant up
+  log "VMs up. Run 'pglab status' to see readiness."
+}
+
+cmd_down() {
+  log "Halting all VMs (vagrant halt)..."
+  cd "$VAGRANT_DIR"
+  vagrant halt
+  log "VMs halted. State preserved on disk."
+}
+
+cmd_teardown() {
+  require_file "$TEARDOWN"
+  log "Running teardown.sh (VMs + host-only network cleanup)..."
+  bash "$TEARDOWN"
+  log "Teardown complete. Next: 'pglab deploy' or 'pglab reset'."
+}
+
+cmd_deploy() {
+  require_file "$DEPLOY"
+  log "Running cluster-deploy.sh (this can take ~25 min the first time)..."
+  bash "$DEPLOY"
+  log "Deploy complete. Run 'pglab status' to verify."
+}
+
+cmd_reset() {
+  log "=== RESET: teardown + deploy from scratch ==="
+  cmd_teardown
+  cmd_deploy
+  log "=== RESET COMPLETE ==="
+}
+
+cmd_status() {
+  cd "$VAGRANT_DIR"
+
+  log "Vagrant VM state:"
+  vagrant status 2>&1 | sed 's/^/  /' || true
+
+  if ! vagrant ssh "$PROBE_NODE" -c 'true' >/dev/null 2>&1; then
+    log "VM $PROBE_NODE is not reachable — skipping in-guest checks."
+    return 0
+  fi
+
+  log "etcd cluster:"
+  vagrant ssh "$PROBE_NODE" -c "sudo PATH=/usr/local/bin:/usr/bin:/bin /usr/local/bin/etcdctl --endpoints=${ETCDCTL_ENDPOINTS} endpoint status --write-out=table" 2>&1 | sed 's/^/  /' || true
+
+  log "Patroni cluster:"
+  vagrant ssh "$PROBE_NODE" -c "sudo /usr/local/bin/patronictl -c /etc/patroni/patroni.yml list" 2>&1 | sed 's/^/  /' || true
+
+  log "HAProxy backends (haproxy1):"
+  vagrant ssh haproxy1 -c "echo 'stats show' | sudo socat stdio /var/lib/haproxy/stats 2>/dev/null || sudo systemctl status haproxy --no-pager" 2>&1 | sed 's/^/  /' || true
+
+  log "VIP check from host:"
+  if /usr/bin/nc -z -w 2 "$VIP_WRITE" "$VIP_PORT_WRITE" 2>/dev/null; then
+    echo "    ${VIP_WRITE}:${VIP_PORT_WRITE} (write) -> reachable"
+  else
+    echo "    ${VIP_WRITE}:${VIP_PORT_WRITE} (write) -> NOT reachable"
+  fi
+  if /usr/bin/nc -z -w 2 "$VIP_READ" "$VIP_PORT_READ" 2>/dev/null; then
+    echo "    ${VIP_READ}:${VIP_PORT_READ} (read)  -> reachable"
+  else
+    echo "    ${VIP_READ}:${VIP_PORT_READ} (read)  -> NOT reachable"
+  fi
+}
+
+cmd_test() {
+  cd "$VAGRANT_DIR"
+  ensure_vagrant_running
+
+  log "=== HA FAILOVER TEST ==="
+  log "Step 1: find current leader"
+  local leader
+  leader=$(vagrant ssh "$PROBE_NODE" -c "sudo /usr/local/bin/patronictl -c /etc/patroni/patroni.yml list -f tsv 2>/dev/null | awk -F'\t' 'NR>1 && \$4==\"Leader\" {print \$2}'" 2>/dev/null | tail -1 | tr -d '[:space:]')
+  if [ -z "$leader" ]; then
+    log "Could not detect leader — listing cluster:"
+    vagrant ssh "$PROBE_NODE" -c "sudo /usr/local/bin/patronictl -c /etc/patroni/patroni.yml list" 2>&1 | sed 's/^/  /'
+    return 1
+  fi
+  log "  current leader = $leader"
+
+  log "Step 2: stop Patroni on $leader"
+  vagrant ssh "$leader" -c "sudo systemctl stop patroni" 2>&1 | sed 's/^/  /'
+
+  log "Step 3: wait ~35s for TTL + leader election"
+  sleep 35
+
+  log "Step 4: new cluster state (a replica should now be Leader)"
+  vagrant ssh "$PROBE_NODE" -c "sudo /usr/local/bin/patronictl -c /etc/patroni/patroni.yml list" 2>&1 | sed 's/^/  /'
+
+  log "Step 5: write through the VIP (tests that the new leader is reachable)"
+  # Pick any DB node other than the (now-stopped) leader as the launchpad.
+  local probe
+  for n in "${DB_NODES[@]}"; do
+    [ "$n" != "$leader" ] && { probe="$n"; break; }
+  done
+  vagrant ssh "$probe" -c "PGPASSWORD='${PG_ADMIN_PASSWORD}' /usr/pgsql-16/bin/psql -h ${VIP_WRITE} -p ${VIP_PORT_WRITE} -U ${PG_ADMIN_USER} -d ${PG_DATABASE} -c 'SELECT pg_is_in_recovery() AS is_replica, inet_server_addr() AS new_leader_ip;'" 2>&1 | sed 's/^/  /' || true
+
+  log "Step 6: restart Patroni on the original $leader  (it will rejoin as a replica)"
+  vagrant ssh "$leader" -c "sudo systemctl start patroni" 2>&1 | sed 's/^/  /'
+
+  log "Step 7: final cluster state"
+  sleep 10
+  vagrant ssh "$PROBE_NODE" -c "sudo /usr/local/bin/patronictl -c /etc/patroni/patroni.yml list" 2>&1 | sed 's/^/  /'
+
+  log "=== HA FAILOVER TEST COMPLETE ==="
+}
+
+cmd_console() {
+  cd "$VAGRANT_DIR"
+  ensure_vagrant_running
+  log "Opening psql via VIP ${VIP_WRITE}:${VIP_PORT_WRITE} (write side)"
+  # Prefer the host's psql (Postgres.app or brew), fall back to launching from postnode1.
+  local psql
+  psql="$(command -v psql || true)"
+  if [ -z "$psql" ]; then
+    log "No host psql — using psql inside $PROBE_NODE"
+    vagrant ssh "$PROBE_NODE" -c "PGPASSWORD='${PG_ADMIN_PASSWORD}' /usr/pgsql-16/bin/psql -h ${VIP_WRITE} -p ${VIP_PORT_WRITE} -U ${PG_ADMIN_USER} -d ${PG_DATABASE}" "$@"
+  else
+    PGPASSWORD="${PG_ADMIN_PASSWORD}" "$psql" -h "${VIP_WRITE}" -p "${VIP_PORT_WRITE}" -U "${PG_ADMIN_USER}" -d "${PG_DATABASE}" "$@"
+  fi
+}
+
+cmd_ssh() {
+  cd "$VAGRANT_DIR"
+  local target="${1:-}"
+  [ -n "$target" ] || die "usage: pglab ssh <node>   e.g. pglab ssh postnode1"
+  shift || true
+  vagrant ssh "$target" -- "$@"
+}
+
+cmd_logs() {
+  cd "$VAGRANT_DIR"
+  local target="${1:-}"
+  local service="${2:-patroni}"
+  [ -n "$target" ] || die "usage: pglab logs <node> [service]   e.g. pglab logs postnode1 patroni"
+  vagrant ssh "$target" -c "sudo journalctl -u ${service} -f --no-pager"
+}
+
+cmd_help() {
+  cat <<EOF
+pglab — single entry-point for the 6-node Patroni HA cluster
+
+USAGE
+  pglab <command> [args]
+
+LIFECYCLE COMMANDS — run in this order for a fresh build:
+  1) pglab teardown   destroy VMs + host-only networks (idempotent)
+  2) pglab deploy     vagrant up + provision everything
+  3) pglab status     verify cluster is healthy
+  OR just 'pglab reset' to do all of the above in one shot.
+
+CLUSTER OPERATIONS
+  pglab up            boot VMs (vagrant up)
+  pglab down          halt VMs (state preserved)
+  pglab status        VM state + etcd + Patroni + HAProxy + VIP
+  pglab test          HA failover test (stop leader, verify replica takes over)
+  pglab console       open psql via VIP ${VIP_WRITE}:${VIP_PORT_WRITE}
+  pglab ssh <node>    ssh into a node (postnode1..6, haproxy1/2)
+  pglab logs <node> [service]   tail journalctl (default service: patroni)
+
+DEFAULT CREDENTIALS
+  ${PG_SUPERUSER} / ${PG_SUPERUSER_PASSWORD}        PostgreSQL superuser
+  ${PG_ADMIN_USER} / ${PG_ADMIN_PASSWORD}           PostgreSQL admin (created post-bootstrap)
+  ${PG_REPL_USER} / ${PG_REPL_PASSWORD}             replication user
+  ${HAPROXY_STATS_USER} / ${HAPROXY_STATS_PASSWORD} HAProxy stats (port 8080)
+  ${KEEPALIVED_AUTH}                                keepalived shared auth
+
+CONNECT ENDPOINTS
+  ${VIP_WRITE}:${VIP_PORT_WRITE}  write (HAProxy -> current Patroni leader)
+  ${VIP_READ}:${VIP_PORT_READ}    read  (HAProxy -> round-robin over replicas)
+  ${PROBE_IP}:8008                Patroni REST on ${PROBE_NODE}
+  ${NODE_IP_haproxy1}:8080        HAProxy stats on pghaproxy1
+
+CUSTOMIZING
+  Edit vagrant-configs/cluster.conf to change IPs, hostnames, VIP, ports,
+  or credentials. All scripts source this file. Changes require a fresh
+  'pglab reset' (VMs are baked with the old IPs in /etc/hosts).
+
+FILES
+  ./teardown.sh                                        VM/network cleanup
+  ./vagrant-configs/cluster.conf                       single source of truth
+  ./vagrant-configs/cluster-deploy.sh                  full deploy
+  ./vagrant-configs/{common,pg,etcd,haproxy,keepalived}-setup.sh
+EOF
+}
+
+# ----------------------------------------------------------------
+# Dispatch
+# ----------------------------------------------------------------
+SUBCMD="${1:-help}"
+shift || true
+
+case "$SUBCMD" in
+  up)        cmd_up        "$@" ;;
+  down)      cmd_down      "$@" ;;
+  deploy)    cmd_deploy    "$@" ;;
+  teardown)  cmd_teardown  "$@" ;;
+  destroy)   cmd_teardown  "$@" ;; # alias for teardown
+  reset)     cmd_reset     "$@" ;;
+  status)    cmd_status    "$@" ;;
+  test)      cmd_test      "$@" ;;
+  failover)  cmd_test      "$@" ;; # alias for test
+  console)   cmd_console   "$@" ;;
+  psql)      cmd_console   "$@" ;; # alias for console
+  ssh)       cmd_ssh       "$@" ;;
+  logs)      cmd_logs      "$@" ;;
+  help|-h|--help) cmd_help ;;
+  *)         die "unknown command: $SUBCMD  (try 'pglab help')" ;;
+esac
