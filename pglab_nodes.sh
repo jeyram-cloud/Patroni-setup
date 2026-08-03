@@ -17,8 +17,11 @@ CONF="$(cd "$(dirname "$0")" && pwd)/vagrant-configs/cluster.conf"
 . "$CONF"
 
 # Verify we're in the right vagrant environment (the one defining postnode*)
-if ! grep -q "vm.define :postnode1" Vagrantfile 2>/dev/null; then
-  echo "ERROR: Vagrantfile in $(pwd) does not define 'postnode1'." >&2
+# The Vagrantfile is generated dynamically from cluster.conf, so check that
+# cluster.conf lists postnode1 in DB_NODES instead of grepping Vagrantfile.
+if ! printf '%s\n' "${DB_NODES[@]}" | grep -qx "postnode1"; then
+  echo "ERROR: cluster.conf does not list 'postnode1' in DB_NODES." >&2
+  echo "       Found: ${DB_NODES[*]}" >&2
   echo "       Run this script from the pglab cluster dir." >&2
   exit 1
 fi
