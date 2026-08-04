@@ -2,11 +2,13 @@
 # ----------------------------------------------------------
 # common-setup.sh — applied to EVERY node (DB and LB)
 # Argument: $1 = short hostname (e.g. postnode1, pghaproxy1)
-# Reads /etc/hosts block from ../vagrant-configs/cluster.conf.
+# Reads /etc/hosts block from /tmp/cluster.conf (uploaded by Vagrantfile).
 # ----------------------------------------------------------
 set -euo pipefail
 
-CONF="$(cd "$(dirname "$0")" && pwd)/cluster.conf"
+# cluster.conf is uploaded alongside this script by the Vagrantfile
+# shell provisioner, so it lives next to us in /tmp/.
+CONF="/tmp/cluster.conf"
 # shellcheck disable=SC1090
 . "${CONF}"
 

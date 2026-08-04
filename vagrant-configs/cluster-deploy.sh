@@ -93,6 +93,13 @@ done
 echo
 echo "==== 3) copy provisioner scripts to every node ===="
 for n in "${DB_NODES[@]}" "${LB_VMS[@]}"; do
+  # cluster.conf must be in /tmp/ on every node so the *_setup.sh scripts
+  # (which all source CONF=/tmp/cluster.conf) can read the single source
+  # of truth at runtime. Vagrantfile already copies it on first 'vagrant
+  # up' via :file provisioner, but we re-upload unconditionally so a
+  # cluster-deploy.sh invocation on an already-up cluster always picks up
+  # the latest cluster.conf from the host.
+  upload "$n" "$SCRIPT_DIR/cluster.conf"
   for f in common-setup.sh etcd-setup.sh pg-setup.sh haproxy-setup.sh keepalived-setup.sh; do
     upload "$n" "$SCRIPT_DIR/$f"
   done

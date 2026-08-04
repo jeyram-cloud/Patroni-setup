@@ -67,6 +67,11 @@ Vagrant.configure("2") do |config|
       target_config.vm.host_name = name
       target_config.vm.provider "virtualbox"
       target_config.vm.network "private_network", ip: ip
+      # cluster.conf MUST be present in /tmp/ before any *_setup.sh runs,
+      # because every script sources it via 'CONF=/tmp/cluster.conf'.
+      target_config.vm.provision :file,
+        source: 'vagrant-configs/cluster.conf',
+        destination: '/tmp/cluster.conf'
       target_config.vm.provision :shell, :path => 'vagrant-configs/common-setup.sh', :args => name
       if is_etcd
         target_config.vm.provision :shell, :path => 'vagrant-configs/etcd-setup.sh', :args => name, run: "never"
@@ -91,6 +96,9 @@ Vagrant.configure("2") do |config|
         v.cpus = 1
       end
       target_config.vm.network "private_network", ip: ip
+      target_config.vm.provision :file,
+        source: 'vagrant-configs/cluster.conf',
+        destination: '/tmp/cluster.conf'
       target_config.vm.provision :shell, :path => 'vagrant-configs/common-setup.sh',  :args => host
       target_config.vm.provision :shell, :path => 'vagrant-configs/haproxy-setup.sh'
       target_config.vm.provision :shell, :path => 'vagrant-configs/keepalived-setup.sh', :args => host, run: "never"

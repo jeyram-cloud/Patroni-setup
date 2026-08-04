@@ -7,8 +7,7 @@
 # ----------------------------------------------------------
 set -euo pipefail
 
-# Source cluster.conf from the same directory this script lives in.
-CONF="$(cd "$(dirname "$0")" && pwd)/cluster.conf"
+CONF="/tmp/cluster.conf"
 # shellcheck disable=SC1090
 . "${CONF}"
 

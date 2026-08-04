@@ -11,7 +11,7 @@
 # ----------------------------------------------------------
 set -euo pipefail
 
-CONF="$(cd "$(dirname "$0")" && pwd)/cluster.conf"
+CONF="/tmp/cluster.conf"
 # shellcheck disable=SC1090
 . "${CONF}"
 
