@@ -44,11 +44,25 @@ running_nodes() {
 }
 
 find_leader() {
-  $PGLAB status 2>/dev/null | awk -F'|' '/\| (Leader|Replica) \|/ {gsub(/ /,"",$3); if ($3=="Leader") print $2}' | head -1 | xargs
+  # Role column is the 4th '|'-separated field: "| <member> | <host> | <Role> | <State> | ..."
+  # Capture to a temp file to avoid SIGPIPE (141) terminating the calling script
+  # under `set -o pipefail` when the producer (./pglab) keeps writing while awk
+  # has already exited.
+  local _status _out
+  _out="$("$PGLAB" status 2>/dev/null || true)"
+  printf '%s\n' "$_out" | awk -F'|' '/Leader|Replica/ && NF>=5 {
+    role=$4; gsub(/ /,"",role);
+    if (role=="Leader") { gsub(/ /,"",$2); print $2; exit(0) }
+  }'
 }
 
 find_replicas() {
-  $PGLAB status 2>/dev/null | awk -F'|' '/\| (Leader|Replica) \|/ {gsub(/ /,"",$3); if ($3=="Replica") print $2}' | xargs
+  local _out
+  _out="$("$PGLAB" status 2>/dev/null || true)"
+  printf '%s\n' "$_out" | awk -F'|' '/Leader|Replica/ && NF>=5 {
+    role=$4; gsub(/ /,"",role);
+    if (role=="Replica") { gsub(/ /,"",$2); print $2 }
+  }' | xargs
 }
 
 # Map pglab alias (postnodeN) -> vagrant vm name (pgnodeN)
