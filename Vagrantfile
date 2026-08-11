@@ -49,14 +49,21 @@ Vagrant.configure("2") do |config|
   # Every Vagrant virtual environment requires a box to build off of.
   config.vm.box = "bento/almalinux-9"
   config.ssh.username = "vagrant"
-  config.vm.network "forwarded_port", guest: 11434, host: 11434, auto_correct: true
-  config.vm.network "forwarded_port", guest: 2222,    host: 2222,  auto_correct: true
-  config.vm.network "forwarded_port", guest: 6379,  host: 6379,  auto_correct: true
-  config.vm.network "forwarded_port", guest: 26379, host: 26379, auto_correct: true
-  config.vm.network "forwarded_port", guest: 8080,  host: 8080,  auto_correct: true
 
+  # Forwarded-port range. Each VM grabs one unique host port from the
+  # configured range. We anchor the ranges far from common service ports
+  # (30000+) so 8 simultaneous VMs don't collide on a single port.
+  # Range = 50000..50100 = 100 unique host ports, plenty for 8 VMs.
+  config.vm.usable_port_range = 50000..50100
+
+  DB_BASE_GUEST_PORT = 31_000  # first guest port; +N per VM
+  DB_PORTS_PER_VM    = 5       # 5 forwarded ports per DB node
+  LB_BASE_GUEST_PORT = 40_000  # first guest port; +N per LB node
+  LB_PORTS_PER_VM    = 3       # 3 forwarded ports per LB node
+
+  vm_seq = 0
   # ----------------------------------------------------------------
-  # DB nodes (postnode1..6) — Postgres + Patroni
+  # DB nodes — Postgres + Patroni
   # ----------------------------------------------------------------
   DB_NODES.each_with_index do |name, idx|
     is_etcd = ETCD_NODES.include?(name)
@@ -67,6 +74,23 @@ Vagrant.configure("2") do |config|
       target_config.vm.host_name = name
       target_config.vm.provider "virtualbox"
       target_config.vm.network "private_network", ip: ip
+
+      # Pick a deterministic base guest port for this VM and assign
+      # auto-corrected host ports one-per-VM in the usable_port_range
+      # above (so 8 VMs don't fight over a single base port).
+      base = DB_BASE_GUEST_PORT + (idx * DB_PORTS_PER_VM)
+      [
+        [base,     22   ],  # SSH
+        [base + 1, 5432 ],  # Postgres
+        [base + 2, 8008 ],  # Patroni REST
+        [base + 3, 2379 ],  # etcd client (etcd members only)
+        [base + 4, 2380 ],  # etcd peer   (etcd members only)
+      ].each do |guest, host_svc|
+        target_config.vm.network "forwarded_port",
+          guest: guest, host: guest, host_ip: "127.0.0.1",
+          auto_correct: true, protocol: "tcp"
+      end
+
       # cluster.conf MUST be present in /tmp/ before any *_setup.sh runs,
       # because every script sources it via 'CONF=/tmp/cluster.conf'.
       target_config.vm.provision :file,
@@ -81,9 +105,9 @@ Vagrant.configure("2") do |config|
   end
 
   # ----------------------------------------------------------------
-  # LB nodes (haproxy1, haproxy2) — HAProxy + Keepalived
+  # LB nodes — HAProxy + Keepalived
   # ----------------------------------------------------------------
-  LB_VMS.each do |name|
+  LB_VMS.each_with_index do |name, idx|
     ip_var   = "NODE_IP_#{name}"
     host_var = "NODE_HOST_#{name}"
     ip   = eval(ip_var)
@@ -96,6 +120,18 @@ Vagrant.configure("2") do |config|
         v.cpus = 1
       end
       target_config.vm.network "private_network", ip: ip
+
+      base = LB_BASE_GUEST_PORT + (idx * LB_PORTS_PER_VM)
+      [
+        [base,     22  ],  # SSH
+        [base + 1, 8080],  # HAProxy stats
+        [base + 2, 80  ],  # HAProxy HTTP (if you ever add it)
+      ].each do |guest, _host_svc|
+        target_config.vm.network "forwarded_port",
+          guest: guest, host: guest, host_ip: "127.0.0.1",
+          auto_correct: true, protocol: "tcp"
+      end
+
       target_config.vm.provision :file,
         source: 'vagrant-configs/cluster.conf',
         destination: '/tmp/cluster.conf'
