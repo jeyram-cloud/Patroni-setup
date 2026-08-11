@@ -34,6 +34,7 @@ cd "$PROJ_ROOT"
 
 # Source cluster.conf — single source of truth for IPs, hostnames, ports,
 # credentials. Required by status/test/console commands.
+# `set -u` in cluster.conf means we must guard the indirection below.
 # shellcheck disable=SC1090
 . "$CONF"
 
@@ -43,13 +44,14 @@ ALL_VMS=("${DB_NODES[@]}" "${LB_VMS[@]}")
 # First DB node is the canonical probe for etcd/Patroni admin commands.
 PROBE_NODE="${DB_NODES[0]}"
 PROBE_IP_VAR="NODE_IP_${PROBE_NODE}"
-PROBE_IP="${!PROBE_IP_VAR}"
+# Guarded indirection — ${PROBE_IP_VAR} is always set, but eval it safely.
+eval "PROBE_IP=\"\${${PROBE_IP_VAR}:-}\""
 
 # Build the etcd endpoint list (http://ip:2379,...) from cluster.conf.
 ETCDCTL_ENDPOINTS=""
 for n in "${ETCD_NODES[@]}"; do
   ip_var="NODE_IP_${n}"
-  ETCDCTL_ENDPOINTS="${ETCDCTL_ENDPOINTS}http://${!ip_var}:2379,"
+  eval "ETCDCTL_ENDPOINTS=\"\${ETCDCTL_ENDPOINTS}http://\${${ip_var}:-}:2379,\""
 done
 ETCDCTL_ENDPOINTS="${ETCDCTL_ENDPOINTS%,}"
 

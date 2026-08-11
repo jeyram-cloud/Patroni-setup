@@ -10,24 +10,29 @@ CONF="/tmp/cluster.conf"
 # shellcheck disable=SC1090
 . "${CONF}"
 
-NODE="${1:-haproxy1}"
+NODE="${1:-${LB_VMS[0]}}"
 case "$NODE" in
-  haproxy1)
+  ${LB_VMS[0]:-haproxy1})
     STATE="MASTER"
     PRIO="${KEEPALIVED_PRIORITY_MASTER}"
-    IP_VAR="NODE_IP_haproxy1"
-    PEER_VAR="NODE_IP_haproxy2"
+    IP_VAR="NODE_IP_${LB_VMS[0]:-haproxy1}"
+    PEER_VAR="NODE_IP_${LB_VMS[1]:-haproxy2}"
     ;;
-  haproxy2)
+  ${LB_VMS[1]:-haproxy2})
     STATE="BACKUP"
     PRIO="${KEEPALIVED_PRIORITY_BACKUP}"
-    IP_VAR="NODE_IP_haproxy2"
-    PEER_VAR="NODE_IP_haproxy1"
+    IP_VAR="NODE_IP_${LB_VMS[1]:-haproxy2}"
+    PEER_VAR="NODE_IP_${LB_VMS[0]:-haproxy1}"
     ;;
-  *) echo "keepalived-setup.sh: unknown node $NODE"; exit 1 ;;
+  *) echo "keepalived-setup.sh: unknown node $NODE (expected ${LB_VMS[*]})"; exit 1 ;;
 esac
-IP="${!IP_VAR}"
-PEER="${!PEER_VAR}"
+# Guarded indirection so 'set -u' doesn't trip on missing keys.
+eval "IP=\"\${${IP_VAR}:-}\""
+eval "PEER=\"\${${PEER_VAR}:-}\""
+if [ -z "${IP}" ]; then
+  echo "keepalived-setup.sh: NODE_IP_${NODE} is empty in cluster.conf" >&2
+  exit 1
+fi
 
 echo "==== keepalived-setup.sh on ${NODE} (${IP}) state=${STATE} peer=${PEER} ===="
 

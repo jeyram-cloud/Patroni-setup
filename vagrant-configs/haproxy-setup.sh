@@ -18,7 +18,8 @@ dnf install -y haproxy
 BACKEND_SERVERS=""
 for n in "${DB_NODES[@]}"; do
   ip_var="NODE_IP_${n}"
-  BACKEND_SERVERS="${BACKEND_SERVERS}    server ${n} ${!ip_var}:${PG_LISTEN_PORT} maxconn 300 check port 8008
+  eval "_ip=\"\${${ip_var}:-}\""
+  BACKEND_SERVERS="${BACKEND_SERVERS}    server ${n} ${_ip}:${PG_LISTEN_PORT} maxconn 300 check port 8008
 "
 done
 

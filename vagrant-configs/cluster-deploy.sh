@@ -128,13 +128,14 @@ done
 # Use the first etcd node as the probe target.
 ETCD_PROBE="${ETCD_NODES[0]}"
 ETCD_PROBE_IP_VAR="NODE_IP_${ETCD_PROBE}"
-ETCD_PROBE_IP="${!ETCD_PROBE_IP_VAR}"
+eval "ETCD_PROBE_IP=\"\${${ETCD_PROBE_IP_VAR}:-}\""
 
 # Build the etcd endpoint list (http://ip:2379,...) from cluster.conf.
 ETCDCTL_ENDPOINTS=""
 for n in "${ETCD_NODES[@]}"; do
   ip_var="NODE_IP_${n}"
-  ETCDCTL_ENDPOINTS="${ETCDCTL_ENDPOINTS}http://${!ip_var}:2379,"
+  eval "_ip=\"\${${ip_var}:-}\""
+  ETCDCTL_ENDPOINTS="${ETCDCTL_ENDPOINTS}http://${_ip}:2379,"
 done
 ETCDCTL_ENDPOINTS="${ETCDCTL_ENDPOINTS%,}"
 

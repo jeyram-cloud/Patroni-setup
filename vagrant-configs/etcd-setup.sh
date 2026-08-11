@@ -60,7 +60,8 @@ CLUSTER_TOKEN="${ETCD_CLUSTER_TOKEN}"
 INITIAL_CLUSTER=""
 for n in "${ETCD_NODES[@]}"; do
   nip_var="NODE_IP_${n}"
-  INITIAL_CLUSTER="${INITIAL_CLUSTER}${n}=http://${!nip_var}:2380,"
+  eval "_ip=\"\${${nip_var}:-}\""
+  INITIAL_CLUSTER="${INITIAL_CLUSTER}${n}=http://${_ip}:2380,"
 done
 INITIAL_CLUSTER="${INITIAL_CLUSTER%,}"
 INITIAL_CLUSTER_STATE="new"

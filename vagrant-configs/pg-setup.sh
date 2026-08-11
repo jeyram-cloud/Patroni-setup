@@ -67,7 +67,7 @@ restapi:
 
 etcd:
   hosts:
-$(for n in "${ETCD_NODES[@]}"; do ip_var="NODE_IP_${n}"; echo "    - ${!ip_var}:2379"; done)
+$(for n in "${ETCD_NODES[@]}"; do ip_var="NODE_IP_${n}"; eval "echo \"    - \${${ip_var}:-}:2379\""; done)
 
 bootstrap:
   dcs:
