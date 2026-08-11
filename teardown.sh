@@ -32,8 +32,13 @@ echo
 # 1) vagrant destroy — every VM, force
 # ----------------------------------------------------------------
 echo "==== 1) vagrant destroy (all nodes) ===="
-# Both VM names (postnode*) and short hostnames (pghaproxy*) need to be destroyed.
-ALL_VMS=("${DB_NODES[@]}" "${NODE_HOST_haproxy1:-pghaproxy1}" "${NODE_HOST_haproxy2:-pghaproxy2}")
+# Both VM names (DB_NODES) and short hostnames (NODE_HOST_<n>) need to be destroyed.
+ALL_VMS=("${DB_NODES[@]}")
+for _n in "${LB_VMS[@]}"; do
+  _h_var="NODE_HOST_${_n}"
+  _h="${!_h_var:-}"
+  [ -n "$_h" ] && ALL_VMS+=("$_h")
+done
 
 # Try vagrant destroy first (covers the Vagrant-managed names).
 vagrant destroy -f 2>&1 | sed 's/^/  /' || true

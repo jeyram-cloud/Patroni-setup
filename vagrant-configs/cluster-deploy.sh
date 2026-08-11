@@ -41,13 +41,11 @@ PROJ_ROOT="$(cd "$SCRIPT_DIR/.." && pwd)"
 
 # Mapping from Vagrant VM name -> internal hostname (for /etc/hosts).
 # Implemented as a lookup function for bash 3.2 (macOS default) compatibility
-# because `declare -A` requires bash 4+.
+# because `declare -A` requires bash 4+. Reads from cluster.conf so any
+# node naming scheme (postnode*/patnode*/etc.) works.
 host_for() {
-  case "$1" in
-    haproxy1) echo "${NODE_HOST_haproxy1:-pghaproxy1}" ;;
-    haproxy2) echo "${NODE_HOST_haproxy2:-pghaproxy2}" ;;
-    *)        echo "$1" ;;
-  esac
+  local var="NODE_HOST_${1}"
+  eval "echo \"\${${var}:-\${1}}\""
 }
 
 upload() {
@@ -121,7 +119,7 @@ done
 #    fresh from --initial-cluster-state=new.
 # ----------------------------------------------------------------
 echo
-echo "==== 5) etcd on postnode1/2/3 ===="
+echo "==== 5) etcd on ${ETCD_NODES[*]} ===="
 for n in "${ETCD_NODES[@]}"; do
   run_on "$n" "bash /tmp/etcd-setup.sh $n"
   sleep 5
@@ -161,7 +159,7 @@ done
 #    Nodes 2..6 will auto-wipe their data dir and rejoin.
 # ----------------------------------------------------------------
 echo
-echo "==== 7) postgres+patroni on all postnodes (in order) ===="
+echo "==== 7) postgres+patroni on all DB_NODES (in order) ===="
 # CRITICAL: postnode1 must bootstrap as the initial leader, and nodes 2..6 must
 # see a healthy leader on postnode1 before they join. pg-setup.sh wipes the
 # local data dir, then `systemctl enable --now patroni` triggers an initdb.
@@ -171,19 +169,19 @@ echo "==== 7) postgres+patroni on all postnodes (in order) ===="
 for n in "${DB_NODES[@]}"; do
   echo "  provisioning ${n}..."
   run_on "$n" "bash /tmp/pg-setup.sh $n"
-  if [ "$n" = "postnode1" ]; then
-    # Give postnode1 extra time to elect itself as the initial leader and
+  if [ "$n" = "${DB_NODES[0]}" ]; then
+    # Give the first DB node extra time to elect itself as the initial leader and
     # initialize the cluster. Subsequent nodes will not bootstrap successfully
-    # if postnode1 hasn't claimed the leader lock yet.
-    echo "  waiting for postnode1 to acquire the leader lock..."
+    # if it hasn't claimed the leader lock yet.
+    echo "  waiting for ${DB_NODES[0]} to acquire the leader lock..."
     for i in $(seq 1 30); do
-      if vagrant ssh postnode1 -c "sudo /usr/local/bin/patronictl -c /etc/patroni/patroni.yml list 2>/dev/null" | grep -q "Leader"; then
-        echo "  postnode1 is Leader"
+      if vagrant ssh "${DB_NODES[0]}" -c "sudo /usr/local/bin/patronictl -c /etc/patroni/patroni.yml list 2>/dev/null" | grep -q "Leader"; then
+        echo "  ${DB_NODES[0]} is Leader"
         break
       fi
       sleep 3
       if [ "$i" = "30" ]; then
-        echo "  WARN: postnode1 did not become Leader within 90s — replicas may fail to register"
+        echo "  WARN: ${DB_NODES[0]} did not become Leader within 90s — replicas may fail to register"
       fi
     done
   else
@@ -192,22 +190,22 @@ for n in "${DB_NODES[@]}"; do
 done
 
 # ----------------------------------------------------------------
-# 8) haproxy on haproxy1/2
+# 8) haproxy on LB_VMS
 # ----------------------------------------------------------------
 echo
-echo "==== 8) haproxy on haproxy1/2 ===="
+echo "==== 8) haproxy on ${LB_VMS[*]} ===="
 for n in "${LB_VMS[@]}"; do
   run_on "$n" "bash /tmp/haproxy-setup.sh"
 done
 
 # ----------------------------------------------------------------
-# 9) keepalived on haproxy1/2 (haproxy1 first as MASTER)
+# 9) keepalived on LB_VMS (first entry is MASTER)
 # ----------------------------------------------------------------
 echo
-echo "==== 9) keepalived on haproxy1/2 (haproxy1 first as MASTER) ===="
-run_on haproxy1 "bash /tmp/keepalived-setup.sh haproxy1"
+echo "==== 9) keepalived on ${LB_VMS[*]} (${LB_VMS[0]} first as MASTER) ===="
+run_on "${LB_VMS[0]}" "bash /tmp/keepalived-setup.sh ${LB_VMS[0]}"
 sleep 5
-run_on haproxy2 "bash /tmp/keepalived-setup.sh haproxy2"
+run_on "${LB_VMS[1]}" "bash /tmp/keepalived-setup.sh ${LB_VMS[1]}"
 sleep 5
 
 # ----------------------------------------------------------------
@@ -215,7 +213,7 @@ sleep 5
 # ----------------------------------------------------------------
 echo
 echo "==== 10) cluster status ===="
-vagrant ssh postnode1 -- sudo /usr/local/bin/patronictl -c /etc/patroni/patroni.yml list 2>&1 | sed 's/^/  /' || true
+vagrant ssh "${DB_NODES[0]}" -- sudo /usr/local/bin/patronictl -c /etc/patroni/patroni.yml list 2>&1 | sed 's/^/  /' || true
 echo
 echo "  VIP check from host:"
 if /usr/bin/nc -z -w 2 "${VIP_WRITE}" "${VIP_PORT_WRITE}" 2>/dev/null; then

@@ -46,10 +46,10 @@ USAGE
 STEPS
   1) cluster-deploy.sh         vagrant up + run all provisioners
   2) common-setup.sh <node>    per-node deps + /etc/hosts + sysctl
-  3) etcd-setup.sh <node>      3-member etcd cluster (postnode1..3)
-  4) pg-setup.sh <node>        PostgreSQL 16 + Patroni (postnode1..6)
-  5) haproxy-setup.sh          HAProxy on haproxy1/2
-  6) keepalived-setup.sh <n>   Keepalived VIP on haproxy1/2
+  3) etcd-setup.sh <node>      3-member etcd cluster (${ETCD_NODES[*]})
+  4) pg-setup.sh <node>        PostgreSQL + Patroni (${DB_NODES[*]})
+  5) haproxy-setup.sh          HAProxy on ${LB_VMS[*]}
+  6) keepalived-setup.sh <n>   Keepalived VIP on ${LB_VMS[*]}
 
 DEFAULT CREDENTIALS (handed off from setup scripts)
   ${PG_SUPERUSER} / ${PG_SUPERUSER_PASSWORD}       PostgreSQL superuser
@@ -68,10 +68,10 @@ list_steps() {
   printf '%-3s %-30s %s\n' ID STEP-NAME DESCRIPTION
   printf '%-3s %-30s %s\n' "1)" "cluster-deploy.sh" "vagrant up + run all provisioners"
   printf '%-3s %-30s %s\n' "2)" "common-setup.sh"   "per-node deps, /etc/hosts, sysctl, SELinux"
-  printf '%-3s %-30s %s\n' "3)" "etcd-setup.sh"     "3-member etcd cluster on postnode1..3"
-  printf '%-3s %-30s %s\n' "4)" "pg-setup.sh"       "PostgreSQL 16 + Patroni on postnode1..6"
-  printf '%-3s %-30s %s\n' "5)" "haproxy-setup.sh"  "HAProxy on haproxy1/2"
-  printf '%-3s %-30s %s\n' "6)" "keepalived-setup.sh" "Keepalived VIP on haproxy1/2"
+  printf '%-3s %-30s %s\n' "3)" "etcd-setup.sh"     "3-member etcd cluster on ${ETCD_NODES[*]}"
+  printf '%-3s %-30s %s\n' "4)" "pg-setup.sh"       "PostgreSQL + Patroni on ${DB_NODES[*]}"
+  printf '%-3s %-30s %s\n' "5)" "haproxy-setup.sh"  "HAProxy on ${LB_VMS[*]}"
+  printf '%-3s %-30s %s\n' "6)" "keepalived-setup.sh" "Keepalived VIP on ${LB_VMS[*]}"
 }
 
 # ----------------------------------------------------------------
@@ -130,12 +130,10 @@ if want 2; then
   echo "==== 2) common-setup.sh on every node ===="
   # DB_NODES, LB_VMS come from cluster.conf.
   # bash 3.2 (macOS default) has no associative arrays — use a function.
+  # Reads from cluster.conf so any node naming scheme works.
   host_for() {
-    case "$1" in
-      haproxy1) echo "${NODE_HOST_haproxy1:-pghaproxy1}" ;;
-      haproxy2) echo "${NODE_HOST_haproxy2:-pghaproxy2}" ;;
-      *)        echo "$1" ;;
-    esac
+    local var="NODE_HOST_${1}"
+    eval "echo \"\${${var}:-\${1}}\""
   }
   for n in "${DB_NODES[@]}" "${LB_VMS[@]}"; do
     HN="$(host_for "$n")"
@@ -144,7 +142,7 @@ if want 2; then
 fi
 
 # ----------------------------------------------------------------
-# Step 3: etcd-setup.sh on first 3 ETCD_NODES
+# Step 3: etcd-setup.sh on ETCD_NODES
 # ----------------------------------------------------------------
 if want 3; then
   echo "==== 3) etcd-setup.sh on ETCD_NODES ===="
@@ -166,23 +164,23 @@ if want 4; then
 fi
 
 # ----------------------------------------------------------------
-# Step 5: haproxy-setup.sh on haproxy1/2
+# Step 5: haproxy-setup.sh on LB_VMS
 # ----------------------------------------------------------------
 if want 5; then
-  echo "==== 5) haproxy-setup.sh on haproxy1/2 ===="
-  for n in haproxy1 haproxy2; do
+  echo "==== 5) haproxy-setup.sh on ${LB_VMS[*]} ===="
+  for n in "${LB_VMS[@]}"; do
     vagrant ssh "$n" -c "sudo bash -c 'bash /tmp/haproxy-setup.sh'"
   done
 fi
 
 # ----------------------------------------------------------------
-# Step 6: keepalived-setup.sh on haproxy1/2
+# Step 6: keepalived-setup.sh on LB_VMS
 # ----------------------------------------------------------------
 if want 6; then
-  echo "==== 6) keepalived-setup.sh on haproxy1/2 ===="
-  vagrant ssh haproxy1 -c "sudo bash -c 'bash /tmp/keepalived-setup.sh haproxy1'"
+  echo "==== 6) keepalived-setup.sh on ${LB_VMS[*]} ===="
+  vagrant ssh "${LB_VMS[0]}" -c "sudo bash -c 'bash /tmp/keepalived-setup.sh ${LB_VMS[0]}'"
   sleep 5
-  vagrant ssh haproxy2 -c "sudo bash -c 'bash /tmp/keepalived-setup.sh haproxy2'"
+  vagrant ssh "${LB_VMS[1]}" -c "sudo bash -c 'bash /tmp/keepalived-setup.sh ${LB_VMS[1]}'"
 fi
 
 echo

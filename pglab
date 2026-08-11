@@ -127,8 +127,8 @@ cmd_status() {
   log "Patroni cluster:"
   vagrant ssh "$PROBE_NODE" -c "sudo /usr/local/bin/patronictl -c /etc/patroni/patroni.yml list" 2>&1 | sed 's/^/  /' || true
 
-  log "HAProxy backends (haproxy1):"
-  vagrant ssh haproxy1 -c "echo 'stats show' | sudo socat stdio /var/lib/haproxy/stats 2>/dev/null || sudo systemctl status haproxy --no-pager" 2>&1 | sed 's/^/  /' || true
+  log "HAProxy backends (${LB_VMS[0]}):"
+  vagrant ssh "${LB_VMS[0]}" -c "echo 'stats show' | sudo socat stdio /var/lib/haproxy/stats 2>/dev/null || sudo systemctl status haproxy --no-pager" 2>&1 | sed 's/^/  /' || true
 
   log "VIP check from host:"
   if /usr/bin/nc -z -w 2 "$VIP_WRITE" "$VIP_PORT_WRITE" 2>/dev/null; then
@@ -189,7 +189,7 @@ cmd_console() {
   cd "$VAGRANT_DIR"
   ensure_vagrant_running
   log "Opening psql via VIP ${VIP_WRITE}:${VIP_PORT_WRITE} (write side)"
-  # Prefer the host's psql (Postgres.app or brew), fall back to launching from postnode1.
+  # Prefer the host's psql (Postgres.app or brew), fall back to launching from the first DB node.
   local psql
   psql="$(command -v psql || true)"
   if [ -z "$psql" ]; then
@@ -203,7 +203,7 @@ cmd_console() {
 cmd_ssh() {
   cd "$VAGRANT_DIR"
   local target="${1:-}"
-  [ -n "$target" ] || die "usage: pglab ssh <node>   e.g. pglab ssh postnode1"
+  [ -n "$target" ] || die "usage: pglab ssh <node>   e.g. pglab ssh ${DB_NODES[0]:-<node>}"
   shift || true
   vagrant ssh "$target" -- "$@"
 }
@@ -212,7 +212,7 @@ cmd_logs() {
   cd "$VAGRANT_DIR"
   local target="${1:-}"
   local service="${2:-patroni}"
-  [ -n "$target" ] || die "usage: pglab logs <node> [service]   e.g. pglab logs postnode1 patroni"
+  [ -n "$target" ] || die "usage: pglab logs <node> [service]   e.g. pglab logs ${DB_NODES[0]:-<node>} patroni"
   vagrant ssh "$target" -c "sudo journalctl -u ${service} -f --no-pager"
 }
 
@@ -235,7 +235,7 @@ CLUSTER OPERATIONS
   pglab status        VM state + etcd + Patroni + HAProxy + VIP
   pglab test          HA failover test (stop leader, verify replica takes over)
   pglab console       open psql via VIP ${VIP_WRITE}:${VIP_PORT_WRITE}
-  pglab ssh <node>    ssh into a node (postnode1..6, haproxy1/2)
+  pglab ssh <node>    ssh into a node (${DB_NODES[*]}, ${LB_VMS[*]})
   pglab logs <node> [service]   tail journalctl (default service: patroni)
 
 DEFAULT CREDENTIALS
@@ -249,7 +249,7 @@ CONNECT ENDPOINTS
   ${VIP_WRITE}:${VIP_PORT_WRITE}  write (HAProxy -> current Patroni leader)
   ${VIP_READ}:${VIP_PORT_READ}    read  (HAProxy -> round-robin over replicas)
   ${PROBE_IP}:8008                Patroni REST on ${PROBE_NODE}
-  ${NODE_IP_haproxy1}:8080        HAProxy stats on pghaproxy1
+  ${NODE_IP_pathaproxy1}:8080     HAProxy stats on ${NODE_HOST_pathaproxy1:-${LB_VMS[0]}}
 
 CUSTOMIZING
   Edit vagrant-configs/cluster.conf to change IPs, hostnames, VIP, ports,

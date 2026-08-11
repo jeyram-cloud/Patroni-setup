@@ -16,12 +16,10 @@ CONF="$(cd "$(dirname "$0")" && pwd)/vagrant-configs/cluster.conf"
 # shellcheck disable=SC1090
 . "$CONF"
 
-# Verify we're in the right vagrant environment (the one defining postnode*)
-# The Vagrantfile is generated dynamically from cluster.conf, so check that
-# cluster.conf lists postnode1 in DB_NODES instead of grepping Vagrantfile.
-if ! printf '%s\n' "${DB_NODES[@]}" | grep -qx "postnode1"; then
-  echo "ERROR: cluster.conf does not list 'postnode1' in DB_NODES." >&2
-  echo "       Found: ${DB_NODES[*]}" >&2
+# Verify we're in the right vagrant environment: DB_NODES must be non-empty
+# and the first node must look like a valid identifier.
+if [ "${#DB_NODES[@]}" -eq 0 ] || [ -z "${DB_NODES[0]:-}" ]; then
+  echo "ERROR: cluster.conf has empty DB_NODES." >&2
   echo "       Run this script from the pglab cluster dir." >&2
   exit 1
 fi
@@ -65,18 +63,18 @@ find_replicas() {
   }' | xargs
 }
 
-# Map pglab alias (postnodeN) -> vagrant vm name (pgnodeN)
+# Vagrant VM name is just the short name (whatever cluster.conf calls it).
 vm_name() {
-  echo "${1/postnode/pgnode}"
+  echo "$1"
 }
 
 # ---------- subcommands ----------
 
 cmd_start_cluster() {
-  echo "==> Booting all 8 VMs"
+  echo "==> Booting all VMs"
   $PGLAB up
 
-  echo "==> Starting Patroni on all 6 postnodes"
+  echo "==> Starting Patroni on all ${#DB_NODES[@]} DB nodes"
   for n in "${DB_NODES[@]}"; do
     ssh_node "$n" "sudo systemctl enable --now patroni" || echo "  ! $n: patroni start failed"
   done
@@ -93,7 +91,7 @@ cmd_start_cluster() {
 }
 
 cmd_stop_cluster() {
-  echo "==> Stopping Patroni on all 6 postnodes"
+  echo "==> Stopping Patroni on all ${#DB_NODES[@]} DB nodes"
   for n in "${DB_NODES[@]}"; do
     ssh_node "$n" "sudo systemctl stop patroni" 2>/dev/null || true
   done
@@ -132,7 +130,7 @@ cmd_stop_leader() {
 }
 
 cmd_start_replica() {
-  local n="${1:?usage: start_replica postnodeN}"
+  local n="${1:?usage: start_replica <node>}"
   echo "==> Booting VMs and starting Patroni on $n"
   $PGLAB up
   ssh_node "$n" "sudo systemctl enable --now patroni"
@@ -141,7 +139,7 @@ cmd_start_replica() {
 }
 
 cmd_stop_replica() {
-  local n="${1:?usage: stop_replica postnodeN}"
+  local n="${1:?usage: stop_replica <node>}"
   echo "==> Stopping Patroni on $n"
   ssh_node "$n" "sudo systemctl stop patroni" || true
   sleep 3
@@ -153,7 +151,7 @@ cmd_status() {
 }
 
 cmd_restart_all() {
-  echo "==> Restarting all 6 postnodes (stop patroni, start patroni, force leader)"
+  echo "==> Restarting all ${#DB_NODES[@]} DB nodes (stop patroni, start patroni, force leader)"
   for n in "${DB_NODES[@]}"; do
     if ! ssh_node "$n" "sudo systemctl restart patroni" 2>/dev/null; then
       ssh_node "$n" "sudo systemctl enable --now patroni"
@@ -200,10 +198,10 @@ case "${1:-status}" in
 Usage: $0 <command> [args]
   start_cluster                 boot all VMs + start patroni on every node + force election
   stop_cluster                  stop patroni on all nodes + halt VMs
-  start_leader [postnodeN]      start a specific node and force it to be leader (default: postnode1)
+  start_leader [node]           start a specific node and force it to be leader (default: ${DB_NODES[0]:-first DB node})
   stop_leader                   stop patroni on the current leader (auto-failover)
-  start_replica postnodeN       start patroni on a single node (joins as replica)
-  stop_replica  postnodeN       stop patroni on a single node
+  start_replica <node>          start patroni on a single node (joins as replica)
+  stop_replica  <node>          stop patroni on a single node
   restart_all                   restart patroni on every node + force leader
   wipe_cluster                  teardown + redeploy (DESTROYS all VMs, ~25 min)
   status                        show pglab status
