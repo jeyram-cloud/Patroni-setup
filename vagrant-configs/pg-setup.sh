@@ -108,11 +108,14 @@ postgresql:
   parameters:
     unix_socket_directories: '/tmp'
   pg_hba:
-    - local   all   all                 trust
-    - host    all   all   127.0.0.1/32  md5
-    - host    all   all   ${DB_SUBNET} md5
-    - host    replication ${PG_REPL_USER} 127.0.0.1/32 md5
-    - host    replication ${PG_REPL_USER} ${DB_SUBNET} md5
+    - local   all              all                  trust
+    - local   replication      all                  trust
+    - host    all              all   127.0.0.1/32   md5
+    - host    all              all   ${DB_SUBNET}    md5
+    - host    replication      ${PG_REPL_USER} 127.0.0.1/32 md5
+    - host    replication      ${PG_REPL_USER} ${DB_SUBNET}  md5
+    - host    replication      all   127.0.0.1/32   md5
+    - host    replication      all   ${DB_SUBNET}    md5
   post_bootstrap:
     script: /usr/local/bin/patroni-post-bootstrap.sh
     threshold: 30
@@ -137,7 +140,8 @@ cat > /usr/local/bin/patroni-post-bootstrap.sh <<PEOF
 #!/usr/bin/env bash
 set -euo pipefail
 # Use local socket (trust on \`local all all\`) — no password needed.
-PSQL="/usr/pgsql-16/bin/psql -U ${PG_SUPERUSER} -d ${PG_DATABASE} -tAc"
+# Patroni's unix_socket_directories is /tmp, NOT /run/postgresql.
+PSQL="/usr/pgsql-16/bin/psql -h /tmp -U ${PG_SUPERUSER} -d ${PG_DATABASE} -tAc"
 # Make sure postgres itself has a password (matches what patroni.yml says).
 \$PSQL -c "ALTER USER ${PG_SUPERUSER} WITH PASSWORD '${PG_SUPERUSER_PASSWORD}';" >/dev/null || true
 \$PSQL -c "SELECT 1 FROM pg_roles WHERE rolname='${PG_ADMIN_USER}'" | grep -q 1 || \

@@ -34,6 +34,9 @@ echo "==== keepalived-setup.sh on ${NODE} (${IP}) state=${STATE} peer=${PEER} ==
 dnf install -y keepalived
 
 # Health check
+# VIP prefix length: /24 unless the LB subnet is something else.
+VIP_CIDR_LEN="${VIP_CIDR_LEN:-24}"
+mkdir -p /etc/keepalived
 cat > /etc/keepalived/check_haproxy.sh <<'EOF'
 #!/bin/bash
 if pgrep -x haproxy > /dev/null; then
@@ -74,7 +77,7 @@ vrrp_instance PG_VIP {
         ${PEER}
     }
     virtual_ipaddress {
-        ${VIP_WRITE}/24
+        ${VIP_WRITE}/${VIP_CIDR_LEN}
     }
     track_script {
         check_haproxy
