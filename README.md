@@ -20,7 +20,7 @@ ports, or rotate credentials by editing exactly one file.
 >
 > | Book 1 | Book 2 |
 > |--------|--------|
-> | [PostgreSQL High Availability (1st ed.)](https://www.amazon.com/dp/1098155890/ref=tsm_1_fb_lk) | [PostgreSQL High Availability (2nd ed.)](https://www.amazon.com/dp/9355519362) |
+> | [Hands-On MySQL Administration](https://www.amazon.com/dp/1098155890/ref=tsm_1_fb_lk) | [Mastering Amazon Relational Database Service for MySQL](https://www.amazon.com/dp/9355519362) |
 
 ---
 
