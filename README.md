@@ -16,7 +16,7 @@ Everything is driven by a **single config file** (`vagrant-configs/cluster.conf`
 so you can move the cluster to a different subnet, change hostnames, swap
 ports, or rotate credentials by editing exactly one file.
 
-> 📚 **Author**: Jeyaram Anbanandam — [About me on Medium](https://medium.com/@jramcloud1/about)
+> 📚 **Author**: Jeyaram Ayyalusamy — [About me on Medium](https://medium.com/@jramcloud1/about)
 >
 > | Book 1 | Book 2 |
 > |--------|--------|
