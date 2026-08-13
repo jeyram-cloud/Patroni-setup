@@ -1,4 +1,12 @@
+<div align="center">
+
 # pgvms — 6-node Patroni HA Cluster for PostgreSQL 16
+
+[![Buy on Amazon](https://img.shields.io/badge/Buy%20on%20Amazon-1098155890-orange?style=for-the-badge&logo=amazon)](https://www.amazon.com/dp/1098155890/ref=tsm_1_fb_lk)
+[![Buy on Amazon](https://img.shields.io/badge/Buy%20on%20Amazon-9355519362-orange?style=for-the-badge&logo=amazon)](https://www.amazon.com/dp/9355519362)
+[![Read on Medium](https://img.shields.io/badge/Read%20on%20Medium-%40jramcloud1-black?style=for-the-badge&logo=medium)](https://medium.com/@jramcloud1/about)
+
+</div>
 
 A single-shot, **clone-and-run** setup that takes you from a clean macOS host
 to a fully working 6-node PostgreSQL HA cluster, with HAProxy + Keepalived
@@ -7,6 +15,12 @@ for zero-downtime failover and a 3-node etcd cluster for leader election.
 Everything is driven by a **single config file** (`vagrant-configs/cluster.conf`)
 so you can move the cluster to a different subnet, change hostnames, swap
 ports, or rotate credentials by editing exactly one file.
+
+> 📚 **Author**: Jeyaram Anbanandam — [About me on Medium](https://medium.com/@jramcloud1/about)
+>
+> | Book 1 | Book 2 |
+> |--------|--------|
+> | [PostgreSQL High Availability (1st ed.)](https://www.amazon.com/dp/1098155890/ref=tsm_1_fb_lk) | [PostgreSQL High Availability (2nd ed.)](https://www.amazon.com/dp/9355519362) |
 
 ---
 
